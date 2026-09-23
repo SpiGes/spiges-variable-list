@@ -1,0 +1,92 @@
+name: Create ITARK_Spalte Release
+
+on:
+  workflow_dispatch:
+
+env:
+  RELEASE_FILE: do-t-spiges-VL.xlsx
+
+jobs:
+  generate-version:
+    runs-on: ubuntu-latest
+    outputs:
+      new_version: ${{ steps.set_version.outputs.new_version }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Get latest tag and compute next version with 'v' prefix
+        id: set_version
+        run: |
+          echo "Fetching tags..."
+          git fetch --tags
+          
+          echo "Determining latest version..."
+          latest_tag=$(git tag | grep -E '^v[0-9]+$' | sed 's/v//' | sort -n | tail -n1)
+          
+          if [ -z "$latest_tag" ]; then
+            next_numeric_version=1
+          else
+            next_numeric_version=$((latest_tag + 1))
+          fi
+          
+          version_tag="v$next_numeric_version"
+          
+          echo "Latest numeric tag: ${latest_tag:-none}"
+          echo "Next version tag: $version_tag"
+          
+          echo "new_version=$version_tag" >> "$GITHUB_OUTPUT"
+
+  create-release:
+    needs: generate-version
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Create Release
+        id: create_release
+        env:
+          RELEASE_VERSION: ${{ needs.generate-version.outputs.new_version }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          echo "Creating release version: $RELEASE_VERSION"
+          gh release create "$RELEASE_VERSION" --title "$RELEASE_VERSION" --notes "Automated release for version $RELEASE_VERSION" --draft
+
+  upload-file:
+    needs: [create-release, generate-version]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Upload ${{ env.RELEASE_FILE }} to Release
+        env:
+          RELEASE_VERSION: ${{ needs.generate-version.outputs.new_version }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          echo "Uploading $RELEASE_FILE to release $RELEASE_VERSION"
+          gh release upload "$RELEASE_VERSION" "$RELEASE_FILE" --clobber
+
+  publish-release:
+    needs: [upload-file, generate-version]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Publish Release
+        env:
+          RELEASE_VERSION: ${{ needs.generate-version.outputs.new_version }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          echo "Publishing release version: $RELEASE_VERSION"
+          gh release edit "$RELEASE_VERSION" --draft=false

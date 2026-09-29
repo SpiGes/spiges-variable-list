@@ -1,9 +1,11 @@
-name: Create ITARK_Spalte Release
+name: Create SpiGes Variable List Release
 
 on:
   workflow_dispatch:
 
 env:
+  # Fixed asset name, so that the file stays available under a stable "latest" download link,
+  # whatever the name of the Excel file in the repository
   RELEASE_FILE: do-t-spiges-VL.xlsx
 
 jobs:
@@ -11,11 +13,25 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       new_version: ${{ steps.set_version.outputs.new_version }}
+      source_file: ${{ steps.find_source.outputs.source_file }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
+
+      - name: Find the Excel file to release
+        id: find_source
+        run: |
+          mapfile -t files < <(git ls-files '*.xlsx' ':!:*/*')
+
+          if [ "${#files[@]}" -ne 1 ]; then
+            echo "Exactly one .xlsx file is expected at the repository root, found ${#files[@]}: ${files[*]}"
+            exit 1
+          fi
+
+          echo "Source file: ${files[0]}"
+          echo "source_file=${files[0]}" >> "$GITHUB_OUTPUT"
 
       - name: Get latest tag and compute next version with 'v' prefix
         id: set_version
@@ -52,10 +68,11 @@ jobs:
         id: create_release
         env:
           RELEASE_VERSION: ${{ needs.generate-version.outputs.new_version }}
+          SOURCE_FILE: ${{ needs.generate-version.outputs.source_file }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           echo "Creating release version: $RELEASE_VERSION"
-          gh release create "$RELEASE_VERSION" --title "$RELEASE_VERSION" --notes "Automated release for version $RELEASE_VERSION" --draft
+          gh release create "$RELEASE_VERSION" --title "$RELEASE_VERSION" --notes "Automated release for version $RELEASE_VERSION (source file: $SOURCE_FILE)" --draft
 
   upload-file:
     needs: [create-release, generate-version]
@@ -69,10 +86,12 @@ jobs:
       - name: Upload ${{ env.RELEASE_FILE }} to Release
         env:
           RELEASE_VERSION: ${{ needs.generate-version.outputs.new_version }}
+          SOURCE_FILE: ${{ needs.generate-version.outputs.source_file }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          echo "Uploading $RELEASE_FILE to release $RELEASE_VERSION"
-          gh release upload "$RELEASE_VERSION" "$RELEASE_FILE" --clobber
+          echo "Uploading $SOURCE_FILE as $RELEASE_FILE to release $RELEASE_VERSION"
+          cp "$SOURCE_FILE" "$RUNNER_TEMP/$RELEASE_FILE"
+          gh release upload "$RELEASE_VERSION" "$RUNNER_TEMP/$RELEASE_FILE" --clobber
 
   publish-release:
     needs: [upload-file, generate-version]
